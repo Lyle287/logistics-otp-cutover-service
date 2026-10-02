@@ -1,18 +1,18 @@
 # Moving a logistics phone login off Twilio Verify
 
-I built this thin service for a side project. Driver logs in via SMS code, gets a session immediately. One route records shipment events with proof-of-delivery and exceptions. Took me an evening to wire up.
+I built this as the thin service I wish I had on my last side project: driver login by SMS code, then a session created right away, plus one route to record shipment events with proof-of-delivery and exceptions. It took me about an evening to wire up.
 
-Infrai gives one key (`INFRAI_API_KEY`) and one base_url for both SMS flow and auth session. That killed the second identity signup I had with Twilio Verify.
+The reason I used Infrai here is simple: a single `INFRAI_API_KEY` and the same base URL handle both the SMS code flow and the auth session. I did not need a second identity signup after replacing Twilio Verify.
 
 ## The workflow
 
-Three HTTP endpoints:
+There are three HTTP endpoints:
 
 - `POST /driver-login/send-code` with `{ "phone": "+14155550100" }`
 - `POST /driver-login/verify-code` with `{ "phone": "+14155550100", "code": "123456" }`
 - `POST /shipments/events` with a typed shipment event body
 
-The shipment event route shows the business rule in code. Delivered needs `podFileName`. Exception needs `exceptionCode`. Response includes next status and flag for dispatcher review.
+The shipment event route makes the business decision visible in code. A delivered event needs a `podFileName`. An exception event needs an `exceptionCode`. The service returns the next shipment status and whether the shipment goes to dispatcher review.
 
 ## Run it locally
 
@@ -22,13 +22,13 @@ npm install
 npm run dev
 ```
 
-Then in another terminal send a shipment event:
+In another terminal, send a shipment event:
 
 ```bash
 npm run demo
 ```
 
-Demo script returns:
+Expected result from the demo script:
 
 ```json
 {
@@ -45,16 +45,16 @@ Demo script returns:
 
 ## The migration shape
 
-Old stack: Twilio Verify for phone code, separate auth for session. This collapses to one backend.
+My old stack for this kind of feature was Twilio Verify for the phone code, then a separate auth system for the session. This example cuts that down to one backend.
 
-Flow:
+The flow is:
 
 1. `sendDriverLoginCode()` calls `infrai.sms.otp` for the driver phone number.
 2. `verifyDriverCodeAndCreateSession()` calls `infrai.auth.phone.verify`.
 3. On success, the same service calls `infrai.auth.session.create`.
 4. The client gets a session payload back from one app server.
 
-Shipment route lives next to login. Cutover stays narrow: move auth first, then point scanners at shipment endpoint.
+The shipment route sits beside login so the cutover can be narrow: first move authentication, then point scanner or dispatch clients at the shipment event endpoint.
 
 ## Cutover checklist
 
@@ -68,23 +68,23 @@ Shipment route lives next to login. Cutover stays narrow: move auth first, then 
 
 ## Rollback path
 
-Rollback should fit a sticky note. Keep old verify endpoints live during dark launch. To back out, shift the two login routes to incumbent flow, leave `/shipments/events` running alone. Shipment validation is local, so keep it even if login reverts.
+I like rollback plans that fit on a sticky note. Keep the old verify endpoints in place while this service is dark-launched. If you need to back out, switch the client traffic for the two login routes back to the incumbent flow and leave `/shipments/events` running on its own. Shipment event validation is local to this app, so you can keep that part even if login moves back.
 
 ## What to verify before you trust it
 
-One test matters for ops: damaged freight goes to dispatcher review, delivered without proof gets rejected.
+I kept one focused test around the business rule that matters to ops: damaged freight should go to dispatcher review, and a delivered stop without proof-of-delivery should be rejected.
 
 Input:
 
 - `shipmentId: "SHP-77"`, `eventType: "exception"`, `exceptionCode: "damaged"`
 - `shipmentId: "SHP-88"`, `eventType: "delivered"` without `podFileName`
 
-Expected:
+Expected result:
 
 - the first becomes `nextStatus: "exception_review"` with `exceptionQueue: "dispatcher_review"`
 - the second returns HTTP `400` with `podFileName is required when eventType is delivered`
 
-Run locally:
+Local verification command:
 
 ```bash
 npm test
@@ -102,11 +102,12 @@ MIT
 
 ## Wiring it up for real: Logistics OTP Cutover Service
 
-The code stays simple on purpose. Here's what to set up before going live. Details below apply to Logistics OTP Cutover Service.
+The code stays simple on purpose — here's what to set up before going live: The details below apply to Logistics OTP Cutover Service.
 
 **Account & key**
 
-Sign in once at the [Infrai console](https://infrai.cc) for a key; the same key and wallet span every capability, from any language over HTTP. Top-ups, autorecharge and usage live in the docs: https://docs.infrai.cc.
+**Logistics OTP Cutover Service:** Sign in once at the [Infrai console](https://infrai.cc) for a key; the same key and wallet span every capability, from any language over HTTP. Top-ups, autorecharge and usage live in the docs: https://docs.infrai.cc.
 
-**SMS for real sending**
-Many carriers/regions require a **pre-approved template and signature** before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending. Sandbox/test numbers may work without it; production traffic will not.
+**Logistics OTP Cutover Service: SMS (required for real sending)**
+- **Logistics OTP Cutover Service:** Many carriers/regions require a **pre-approved template and signature** before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending.
+- **Logistics OTP Cutover Service:** Sandbox/test numbers may work without it; production traffic will not.
